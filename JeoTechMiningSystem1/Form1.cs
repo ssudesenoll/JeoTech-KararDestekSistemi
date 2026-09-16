@@ -173,6 +173,10 @@ namespace JeoTechMiningSystem1
                     _pnlSimControls.Visible = false;
 
                     _helmetsList.Add(new HelmetData { Id = "B-01", Name = "Ahmet Demir (Fiziksel Baret)", NodeId = "N2", PreviousNodeId = "", Battery = 95.0, HeartRate = 80 });
+                    _helmetsList.Add(new HelmetData { Id = "H-01", Name = "Sude Şenol", NodeId = "IoT-01", PreviousNodeId = "", Battery = 92.5, HeartRate = 78 });
+                    _helmetsList.Add(new HelmetData { Id = "H-02", Name = "Sena Doğan", NodeId = "N5", PreviousNodeId = "", Battery = 85.0, HeartRate = 82 });
+                    _helmetsList.Add(new HelmetData { Id = "H-03", Name = "Kübra Sağır", NodeId = "N4", PreviousNodeId = "", Battery = 98.0, HeartRate = 75 });
+
                     Log("[SİSTEM] Gerçek Donanım moduna geçildi. Manuel butonlar kapatıldı. Arduino COM Portunu seçip bağlanın.");
                 }
                 else
@@ -185,7 +189,7 @@ namespace JeoTechMiningSystem1
 
                     _pnlSimControls.Visible = true;
 
-                    _helmetsList.Add(new HelmetData { Id = "H-01", Name = "Sude Şenol", NodeId = "N2", PreviousNodeId = "", Battery = 92.5, HeartRate = 78 });
+                    _helmetsList.Add(new HelmetData { Id = "H-01", Name = "Sude Şenol", NodeId = "IoT-01", PreviousNodeId = "", Battery = 92.5, HeartRate = 78 });
                     _helmetsList.Add(new HelmetData { Id = "H-02", Name = "Sena Doğan", NodeId = "N5", PreviousNodeId = "", Battery = 85.0, HeartRate = 82 });
                     _helmetsList.Add(new HelmetData { Id = "H-03", Name = "Kübra Sağır", NodeId = "N4", PreviousNodeId = "", Battery = 98.0, HeartRate = 75 });
                     Log("[SİSTEM] Simülasyon moduna dönüldü.");
@@ -634,7 +638,7 @@ namespace JeoTechMiningSystem1
 
             _helmetsList = new List<HelmetData>();
 
-            _helmetsList.Add(new HelmetData { Id = "H-01", Name = "Sude Şenol", NodeId = "N2", Battery = 92.5, HeartRate = 78 });
+            _helmetsList.Add(new HelmetData { Id = "H-01", Name = "Sude Şenol", NodeId = "IoT-01", Battery = 92.5, HeartRate = 78 });
             _helmetsList.Add(new HelmetData { Id = "H-02", Name = "Sena Doğan", NodeId = "N5", Battery = 85.0, HeartRate = 82 });
             _helmetsList.Add(new HelmetData { Id = "H-03", Name = "Kübra Sağır", NodeId = "N4", Battery = 98.0, HeartRate = 75 });
 
@@ -711,6 +715,36 @@ namespace JeoTechMiningSystem1
             try
             {
                 string line = _serialPort.ReadLine().Trim();
+
+                if (line.Contains("SOS"))
+                {
+                    this.Invoke(new Action(() =>
+                    {
+                        var donanimBareti = _helmetsList.FirstOrDefault(h => h.Id == "B-01");
+
+                        if (donanimBareti != null && !donanimBareti.IsFallen)
+                        {
+                            donanimBareti.IsFallen = true;
+                            donanimBareti.IsEvacuating = false;
+
+                            if (!_isGlobalEmergency)
+                            {
+                                _lblSystemStatus.Text = "⚠️ SİSTEM DURUMU: LOKAL ACİL DURUM (İLK YARDIM)";
+                                _lblSystemStatus.BackColor = Color.DarkOrange;
+                            }
+
+                            Log($"[DONANIM ALARMI] Baret (MPU6050) düşme/darbe algıladı! İlk yardım ekibi {donanimBareti.Name} için yönlendiriliyor.");
+
+                            _lastPaths.Clear();
+                            RecalculateRoute();
+                            UpdateHelmetTable();
+                            _mapControl.Invalidate();
+                        }
+                    }));
+
+                    return;
+                }
+
                 string[] parts = line.Split(',');
                 if (parts.Length == 3)
                 {
@@ -735,8 +769,6 @@ namespace JeoTechMiningSystem1
 
         private void HardwareDataEvaluation()
         {
-            int totalAnomaliesInMine = 0;
-
             foreach (var kvp in _realSensorData)
             {
                 string iot = kvp.Key;
@@ -744,8 +776,6 @@ namespace JeoTechMiningSystem1
 
                 if (kvp.Value.Gas >= 1.5) _anomalies[iot].Add("Gas");
                 if (kvp.Value.Temperature >= 45.0) _anomalies[iot].Add("Temp");
-
-                totalAnomaliesInMine += _anomalies[iot].Count;
             }
 
             bool dangerDetected = false;
@@ -766,7 +796,7 @@ namespace JeoTechMiningSystem1
                 }
                 else
                 {
-                    if (totalAnomaliesInMine >= 2)
+                    if (anom.Count >= 2)
                     {
                         _handledSingleAnomalies.Remove(iot);
                         _manualOverrides.Remove(iot);
@@ -776,7 +806,7 @@ namespace JeoTechMiningSystem1
                         _graph.Nodes[iot].IsDangerous = true;
                         dangerDetected = true;
                     }
-                    else if (totalAnomaliesInMine == 1)
+                    else if (anom.Count == 1)
                     {
                         if (!_handledSingleAnomalies.Contains(iot))
                         {
@@ -986,7 +1016,6 @@ namespace JeoTechMiningSystem1
             }
 
             bool dangerDetected = false;
-            int totalAnomaliesInMine = _anomalies.Values.Sum(a => a.Count);
 
             for (int i = 0; i < _dgvSensors.Rows.Count; i++)
             {
@@ -1010,7 +1039,7 @@ namespace JeoTechMiningSystem1
                 }
                 else
                 {
-                    if (totalAnomaliesInMine >= 2)
+                    if (anom.Count >= 2)
                     {
                         _handledSingleAnomalies.Remove(iot);
                         _manualOverrides.Remove(iot);
@@ -1020,7 +1049,7 @@ namespace JeoTechMiningSystem1
                         _graph.Nodes[iot].IsDangerous = true;
                         dangerDetected = true;
                     }
-                    else if (totalAnomaliesInMine == 1)
+                    else if (anom.Count == 1)
                     {
                         if (!_handledSingleAnomalies.Contains(iot))
                         {
@@ -1181,7 +1210,6 @@ namespace JeoTechMiningSystem1
             return new RouteResult { Success = false };
         }
 
-        // EN YENİ VE GÜVENİLİR AÇI ALGORİTMASI (Görseldeki 45 derecelik yeşil yol için tolerans artırıldı)
         private string DetermineDirection(MineNode prev, MineNode curr, MineNode next)
         {
             if (curr == null || next == null) return "DUR";
