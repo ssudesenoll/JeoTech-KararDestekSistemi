@@ -35,6 +35,10 @@ namespace JeoTechMiningSystem1
         private CheckBox _chkGas, _chkTemp, _chkCollapse;
         private ListBox _lstEvacuated;
 
+        // KABLO HATASI BİLDİRİM DEĞİŞKENLERİ
+        private Label _lblHardwareWarning;
+        private bool _hasShownErrorPopup = false;
+
         // YÖN GÖSTERGELERİ (4'LÜ SİSTEM)
         private Label _lblDirLeft, _lblDirForward, _lblDirRight, _lblDirStop;
 
@@ -137,7 +141,7 @@ namespace JeoTechMiningSystem1
             Label lblMainTitle = new Label { Text = "JEOTECH-KARAR DESTEK SİSTEMİ", Font = new Font("Segoe UI", 20, FontStyle.Bold), ForeColor = Color.Cyan, Location = new Point(150, 20), AutoSize = true };
             panelTop.Controls.Add(lblMainTitle);
 
-            FlowLayoutPanel flpTopRight = new FlowLayoutPanel { Dock = DockStyle.Right, Width = 650, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10, 22, 10, 10) };
+            FlowLayoutPanel flpTopRight = new FlowLayoutPanel { Dock = DockStyle.Right, Width = 750, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(10, 22, 10, 10) };
             panelTop.Controls.Add(flpTopRight);
 
             _lblClock = new Label { Text = "16:13:36", Font = new Font("Consolas", 14, FontStyle.Bold), ForeColor = Color.White, Margin = new Padding(15, 5, 10, 0), AutoSize = true };
@@ -146,6 +150,18 @@ namespace JeoTechMiningSystem1
 
             _btnConnectHardware = new Button { Text = "BAĞLAN", BackColor = Color.SeaGreen, ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9, FontStyle.Bold), Size = new Size(100, 35), Visible = false };
             _cmbComPorts = new ComboBox { Width = 80, DropDownStyle = ComboBoxStyle.DropDownList, Visible = false, Margin = new Padding(5, 7, 5, 0) };
+
+            // SAĞ ÜSTTEKİ DONANIM UYARI ETİKETİ (Gizli Başlar)
+            _lblHardwareWarning = new Label
+            {
+                Text = "⚠️ KABLO TEMASSIZLIĞI (VERİ EKSİK)",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                ForeColor = Color.White,
+                BackColor = Color.DarkRed,
+                Margin = new Padding(15, 7, 10, 0),
+                AutoSize = true,
+                Visible = false
+            };
 
             btnModToggle.Click += (s, e) => {
                 _isRealHardwareMode = !_isRealHardwareMode;
@@ -161,6 +177,10 @@ namespace JeoTechMiningSystem1
 
                 _helmetsList.Clear();
                 _cmbLeftHelmets.Items.Clear();
+
+                // Mod değiştiğinde uyarıyı sıfırla
+                _hasShownErrorPopup = false;
+                _lblHardwareWarning.Visible = false;
 
                 if (_isRealHardwareMode)
                 {
@@ -213,6 +233,7 @@ namespace JeoTechMiningSystem1
             };
 
             flpTopRight.Controls.Add(_lblClock);
+            flpTopRight.Controls.Add(_lblHardwareWarning);
             flpTopRight.Controls.Add(_btnConnectHardware);
             flpTopRight.Controls.Add(_cmbComPorts);
             flpTopRight.Controls.Add(btnModToggle);
@@ -502,6 +523,9 @@ namespace JeoTechMiningSystem1
                 _manualOverrides.Clear();
                 _handledSingleAnomalies.Clear();
 
+                _hasShownErrorPopup = false;
+                _lblHardwareWarning.Visible = false;
+
                 _evacuationTimer.Stop();
                 _lblSystemStatus.Text = "SİSTEM DURUMU: OTONOM İZLEMEDE";
                 _lblSystemStatus.BackColor = Color.SeaGreen;
@@ -710,6 +734,21 @@ namespace JeoTechMiningSystem1
             _btnConnectHardware.BackColor = Color.SeaGreen;
         }
 
+        private void TriggerHardwareWarning()
+        {
+            if (!_hasShownErrorPopup)
+            {
+                _hasShownErrorPopup = true; // Sadece 1 kere tetikler
+
+                this.BeginInvoke(new Action(() => {
+                    _lblHardwareWarning.Visible = true;
+                    Log("[UYARI] Sensörden eksik veya bozuk veri geldi! Kabloları kontrol edin.");
+
+                    MessageBox.Show("Sensörlerden eksik veya bozuk veri alınıyor!\n\nLütfen Arduino ve modül kablolarını (temassızlık ihtimaline karşı) kontrol edin.\n\nSiz kabloyu düzeltene kadar ekranın sağ üst köşesinde küçük bir uyarı kalacaktır. Bağlantı düzeldiğinde uyarı otomatik kapanır.", "Kablo Temassızlığı Uyarısı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }));
+            }
+        }
+
         private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
         {
             try
@@ -752,6 +791,16 @@ namespace JeoTechMiningSystem1
                     if (double.TryParse(parts[1].Replace('.', ','), out double gas) &&
                         double.TryParse(parts[2].Replace('.', ','), out double temp))
                     {
+                        // KABLO HATASI VARDIYSA VE ŞU AN DÜZELDİYSE (Tam veri akışı başladıysa)
+                        if (_hasShownErrorPopup)
+                        {
+                            _hasShownErrorPopup = false;
+                            this.BeginInvoke(new Action(() => {
+                                _lblHardwareWarning.Visible = false; // Yandaki küçük uyarıyı gizle
+                                Log("[SİSTEM] Kablo bağlantısı onarıldı, veri akışı normale döndü.");
+                            }));
+                        }
+
                         if (_realSensorData.ContainsKey(moduleId))
                         {
                             _realSensorData[moduleId].Gas = gas;
@@ -762,9 +811,20 @@ namespace JeoTechMiningSystem1
                             }));
                         }
                     }
+                    else
+                    {
+                        TriggerHardwareWarning();
+                    }
+                }
+                else
+                {
+                    TriggerHardwareWarning();
                 }
             }
-            catch { }
+            catch
+            {
+                TriggerHardwareWarning();
+            }
         }
 
         private void HardwareDataEvaluation()
@@ -796,7 +856,7 @@ namespace JeoTechMiningSystem1
                 }
                 else
                 {
-                    if (anom.Count >= 2)
+                    if (anom.Count >= 2) // ÇAPRAZ DOĞRULAMA
                     {
                         _handledSingleAnomalies.Remove(iot);
                         _manualOverrides.Remove(iot);
@@ -1039,7 +1099,7 @@ namespace JeoTechMiningSystem1
                 }
                 else
                 {
-                    if (anom.Count >= 2)
+                    if (anom.Count >= 2) // ÇAPRAZ DOĞRULAMA
                     {
                         _handledSingleAnomalies.Remove(iot);
                         _manualOverrides.Remove(iot);
@@ -1178,6 +1238,13 @@ namespace JeoTechMiningSystem1
         {
             var exitTypes = new List<NodeType> { NodeType.MainExit, NodeType.AlternativeExit };
             var shelterTypes = new List<NodeType> { NodeType.Shelter };
+
+            // 1. ÇÖZÜM: KARAR KİLİTLEME (Route Flapping Engellendi)
+            if (h.IsForcedToShelter)
+            {
+                var forcedShelterRoute = CalculateOptimalRoute(h.NodeId, shelterTypes, false);
+                if (forcedShelterRoute.Success) return forcedShelterRoute;
+            }
 
             var exitRoute = CalculateOptimalRoute(h.NodeId, exitTypes, false);
 
