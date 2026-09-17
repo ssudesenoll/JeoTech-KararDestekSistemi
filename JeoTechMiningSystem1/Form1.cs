@@ -35,9 +35,10 @@ namespace JeoTechMiningSystem1
         private CheckBox _chkGas, _chkTemp, _chkCollapse;
         private ListBox _lstEvacuated;
 
-        // KABLO HATASI BİLDİRİM DEĞİŞKENLERİ
+        // KABLO HATASI VE SPAM BİLDİRİM DEĞİŞKENLERİ
         private Label _lblHardwareWarning;
         private bool _hasShownErrorPopup = false;
+        private bool _isPopupOpen = false; // POPUP SPAM KİLİDİ
 
         // YÖN GÖSTERGELERİ (4'LÜ SİSTEM)
         private Label _lblDirLeft, _lblDirForward, _lblDirRight, _lblDirStop;
@@ -105,6 +106,8 @@ namespace JeoTechMiningSystem1
             public string ModuleId { get; set; }
             public double Gas { get; set; }
             public double Temperature { get; set; }
+            // WATCHDOG: Sensörün en son ne zaman veri gönderdiği
+            public DateTime LastSeen { get; set; } = DateTime.Now;
         }
 
         private Random _rnd = new Random();
@@ -151,7 +154,6 @@ namespace JeoTechMiningSystem1
             _btnConnectHardware = new Button { Text = "BAĞLAN", BackColor = Color.SeaGreen, ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9, FontStyle.Bold), Size = new Size(100, 35), Visible = false };
             _cmbComPorts = new ComboBox { Width = 80, DropDownStyle = ComboBoxStyle.DropDownList, Visible = false, Margin = new Padding(5, 7, 5, 0) };
 
-            // SAĞ ÜSTTEKİ DONANIM UYARI ETİKETİ (Gizli Başlar)
             _lblHardwareWarning = new Label
             {
                 Text = "⚠️ KABLO TEMASSIZLIĞI (VERİ EKSİK)",
@@ -178,7 +180,6 @@ namespace JeoTechMiningSystem1
                 _helmetsList.Clear();
                 _cmbLeftHelmets.Items.Clear();
 
-                // Mod değiştiğinde uyarıyı sıfırla
                 _hasShownErrorPopup = false;
                 _lblHardwareWarning.Visible = false;
 
@@ -196,6 +197,9 @@ namespace JeoTechMiningSystem1
                     _helmetsList.Add(new HelmetData { Id = "H-01", Name = "Sude Şenol", NodeId = "IoT-01", PreviousNodeId = "", Battery = 92.5, HeartRate = 78 });
                     _helmetsList.Add(new HelmetData { Id = "H-02", Name = "Sena Doğan", NodeId = "N5", PreviousNodeId = "", Battery = 85.0, HeartRate = 82 });
                     _helmetsList.Add(new HelmetData { Id = "H-03", Name = "Kübra Sağır", NodeId = "N4", PreviousNodeId = "", Battery = 98.0, HeartRate = 75 });
+
+                    // Gerçek donanım moduna geçildiğinde tüm Watchdog sürelerini sıfırla
+                    foreach (var kvp in _realSensorData) kvp.Value.LastSeen = DateTime.Now;
 
                     Log("[SİSTEM] Gerçek Donanım moduna geçildi. Manuel butonlar kapatıldı. Arduino COM Portunu seçip bağlanın.");
                 }
@@ -738,7 +742,7 @@ namespace JeoTechMiningSystem1
         {
             if (!_hasShownErrorPopup)
             {
-                _hasShownErrorPopup = true; // Sadece 1 kere tetikler
+                _hasShownErrorPopup = true;
 
                 this.BeginInvoke(new Action(() => {
                     _lblHardwareWarning.Visible = true;
@@ -791,12 +795,11 @@ namespace JeoTechMiningSystem1
                     if (double.TryParse(parts[1].Replace('.', ','), out double gas) &&
                         double.TryParse(parts[2].Replace('.', ','), out double temp))
                     {
-                        // KABLO HATASI VARDIYSA VE ŞU AN DÜZELDİYSE (Tam veri akışı başladıysa)
                         if (_hasShownErrorPopup)
                         {
                             _hasShownErrorPopup = false;
                             this.BeginInvoke(new Action(() => {
-                                _lblHardwareWarning.Visible = false; // Yandaki küçük uyarıyı gizle
+                                _lblHardwareWarning.Visible = false;
                                 Log("[SİSTEM] Kablo bağlantısı onarıldı, veri akışı normale döndü.");
                             }));
                         }
@@ -805,6 +808,9 @@ namespace JeoTechMiningSystem1
                         {
                             _realSensorData[moduleId].Gas = gas;
                             _realSensorData[moduleId].Temperature = temp;
+
+                            // WATCHDOG KİLİDİ: Sensörden sağlam veri geldiği an "Son Görülme Zamanı" güncellenir
+                            _realSensorData[moduleId].LastSeen = DateTime.Now;
 
                             this.Invoke(new Action(() => {
                                 HardwareDataEvaluation();
@@ -843,10 +849,18 @@ namespace JeoTechMiningSystem1
             for (int i = 0; i < _dgvSensors.Rows.Count; i++)
             {
                 string iot = _dgvSensors.Rows[i].Cells[0].Value.ToString();
+
+                // WATCHDOG KONTROLÜ: 10 saniyeden uzun süredir veri gelmeyen ölü sensörler HardwareDataEvaluation'ı çalıştırmasın, SystemTimer onu halledecek.
+                if (_isRealHardwareMode && (DateTime.Now - _realSensorData[iot].LastSeen).TotalSeconds > 10)
+                {
+                    continue;
+                }
+
                 var anom = _anomalies[iot];
 
                 _dgvSensors.Rows[i].Cells[2].Value = $"%{_realSensorData[iot].Gas:F2}";
                 _dgvSensors.Rows[i].Cells[3].Value = $"{_realSensorData[iot].Temperature:F1}°C";
+                _dgvSensors.Rows[i].DefaultCellStyle.ForeColor = Color.White; // Eğer önceden sarı olduysa beyaza çevir
 
                 if (anom.Count == 0)
                 {
@@ -856,7 +870,7 @@ namespace JeoTechMiningSystem1
                 }
                 else
                 {
-                    if (anom.Count >= 2) // ÇAPRAZ DOĞRULAMA
+                    if (anom.Count >= 2)
                     {
                         _handledSingleAnomalies.Remove(iot);
                         _manualOverrides.Remove(iot);
@@ -870,6 +884,9 @@ namespace JeoTechMiningSystem1
                     {
                         if (!_handledSingleAnomalies.Contains(iot))
                         {
+                            // POPUP SPAM KİLİDİ: Zaten ekranda bir popup açıksa arkadan yeni uyarılarla programı kilitleme!
+                            if (_isPopupOpen) continue;
+
                             _handledSingleAnomalies.Add(iot);
 
                             string anomType = anom.First();
@@ -947,8 +964,6 @@ namespace JeoTechMiningSystem1
         private void EvacuationTimer_Tick(object sender, EventArgs e)
         {
             bool needsRefresh = false;
-            double speedMtPerSec = (50.0 / 60.0) * 15.0;
-            double moveAmt = speedMtPerSec * (_evacuationTimer.Interval / 1000.0);
 
             foreach (var h in _helmetsList)
             {
@@ -991,12 +1006,18 @@ namespace JeoTechMiningSystem1
                 {
                     MineNode n1 = _graph.Nodes[h.NodeId];
                     MineNode n2 = _graph.Nodes[h.TargetNodeId];
-                    double edgeDist = Math.Sqrt(Math.Pow(n1.X - n2.X, 2) + Math.Pow(n1.Y - n2.Y, 2));
 
-                    double currentDist = h.EdgeProgress * edgeDist;
+                    double edgeDistMeters = Math.Sqrt(Math.Pow(n1.X - n2.X, 2) + Math.Pow(n1.Y - n2.Y, 2));
+
+                    double currentSpeedMtPerMin = (h.HeartRate >= 120) ? 35.0 : 50.0;
+
+                    double speedMtPerSec = (currentSpeedMtPerMin / 60.0) * 15.0;
+                    double moveAmt = speedMtPerSec * (_evacuationTimer.Interval / 1000.0);
+
+                    double currentDist = h.EdgeProgress * edgeDistMeters;
                     currentDist += moveAmt;
 
-                    if (currentDist >= edgeDist)
+                    if (currentDist >= edgeDistMeters)
                     {
                         h.PreviousNodeId = h.NodeId;
                         h.NodeId = h.TargetNodeId;
@@ -1019,15 +1040,16 @@ namespace JeoTechMiningSystem1
                     }
                     else
                     {
-                        h.EdgeProgress = currentDist / edgeDist;
+                        h.EdgeProgress = currentDist / edgeDistMeters;
 
                         HelmetData selectedLeftPanelHelmet = _cmbLeftHelmets.SelectedItem as HelmetData;
                         if (selectedLeftPanelHelmet != null && selectedLeftPanelHelmet.Id == h.Id && h.Route != null && h.Route.Success)
                         {
-                            double covered = edgeDist * h.EdgeProgress;
-                            double remaining = Math.Max(0, h.Route.Distance - covered);
-                            double etaMins = remaining / 50.0;
-                            _lblETA.Text = $"{remaining:F1}m | ETA: {etaMins:F1} dk";
+                            double covered = edgeDistMeters * h.EdgeProgress;
+                            double remainingMeters = Math.Max(0, h.Route.Distance - covered);
+
+                            double etaMins = remainingMeters / currentSpeedMtPerMin;
+                            _lblETA.Text = $"{remainingMeters:F1}m | ETA: {etaMins:F1} dk";
                         }
                     }
                     needsRefresh = true;
@@ -1069,12 +1091,48 @@ namespace JeoTechMiningSystem1
 
             if (_isRealHardwareMode)
             {
-                RecalculateRoute();
-                UpdateHelmetTable();
-                _mapControl.Invalidate();
+                // WATCHDOG (Bekçi Köpeği) KONTROLÜ
+                // Eğer bir sensörden 10 saniyeden uzun süredir haber alınamıyorsa, o sensörü ölü kabul et!
+                bool needsUpdate = false;
+                foreach (var kvp in _realSensorData)
+                {
+                    if ((DateTime.Now - kvp.Value.LastSeen).TotalSeconds > 10)
+                    {
+                        for (int i = 0; i < _dgvSensors.Rows.Count; i++)
+                        {
+                            if (_dgvSensors.Rows[i].Cells[0].Value.ToString() == kvp.Key)
+                            {
+                                if (_dgvSensors.Rows[i].Cells[4].Value.ToString() != "SİNYAL YOK")
+                                {
+                                    _dgvSensors.Rows[i].Cells[2].Value = "KOPTU";
+                                    _dgvSensors.Rows[i].Cells[3].Value = "KOPTU";
+                                    _dgvSensors.Rows[i].Cells[4].Value = "SİNYAL YOK";
+                                    _dgvSensors.Rows[i].DefaultCellStyle.BackColor = Color.FromArgb(60, 60, 60); // Sönük Gri
+                                    _dgvSensors.Rows[i].DefaultCellStyle.ForeColor = Color.Yellow; // Dikkat çekici Sarı
+
+                                    // Ölü bir sensör tehlike yaratıp haritayı kilitlemesin diye false bırakılır.
+                                    _graph.Nodes[kvp.Key].IsDangerous = false;
+                                    needsUpdate = true;
+
+                                    Log($"[KRİTİK UYARI] {kvp.Key} sensöründen veri gelmiyor (Bağlantı kopmuş veya sensör kapanmış)!");
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (needsUpdate)
+                {
+                    RecalculateRoute();
+                    UpdateHelmetTable();
+                    _mapControl.Invalidate();
+                }
+
                 return;
             }
 
+            // AŞAĞISI SADECE SİMÜLASYON MODU İÇİNDİR
             bool dangerDetected = false;
 
             for (int i = 0; i < _dgvSensors.Rows.Count; i++)
@@ -1099,7 +1157,7 @@ namespace JeoTechMiningSystem1
                 }
                 else
                 {
-                    if (anom.Count >= 2) // ÇAPRAZ DOĞRULAMA
+                    if (anom.Count >= 2)
                     {
                         _handledSingleAnomalies.Remove(iot);
                         _manualOverrides.Remove(iot);
@@ -1113,6 +1171,9 @@ namespace JeoTechMiningSystem1
                     {
                         if (!_handledSingleAnomalies.Contains(iot))
                         {
+                            // POPUP SPAM KİLİDİ
+                            if (_isPopupOpen) continue;
+
                             _handledSingleAnomalies.Add(iot);
                             _systemTimer.Stop();
                             string anomType = anom.First();
@@ -1194,10 +1255,15 @@ namespace JeoTechMiningSystem1
 
                 foreach (var neighbor in current.Neighbors)
                 {
-                    if (!ignoreDangers && neighbor.IsDangerous) continue;
                     if (!unvisited.Contains(neighbor)) continue;
 
                     double dist = Math.Sqrt(Math.Pow(current.X - neighbor.X, 2) + Math.Pow(current.Y - neighbor.Y, 2));
+
+                    if (neighbor.IsDangerous)
+                    {
+                        dist += 9999.0;
+                    }
+
                     double alt = distances[current.Id] + dist;
 
                     if (alt < distances[neighbor.Id])
@@ -1239,7 +1305,6 @@ namespace JeoTechMiningSystem1
             var exitTypes = new List<NodeType> { NodeType.MainExit, NodeType.AlternativeExit };
             var shelterTypes = new List<NodeType> { NodeType.Shelter };
 
-            // 1. ÇÖZÜM: KARAR KİLİTLEME (Route Flapping Engellendi)
             if (h.IsForcedToShelter)
             {
                 var forcedShelterRoute = CalculateOptimalRoute(h.NodeId, shelterTypes, false);
@@ -1250,7 +1315,8 @@ namespace JeoTechMiningSystem1
 
             if (exitRoute.Success)
             {
-                double etaMins = exitRoute.Distance / 50.0;
+                double currentSpeedMtPerMin = (h.HeartRate >= 120) ? 35.0 : 50.0;
+                double etaMins = exitRoute.Distance / currentSpeedMtPerMin;
                 double requiredOfkSecs = etaMins * 60;
                 double requiredBattery = requiredOfkSecs * 0.05;
 
@@ -1466,7 +1532,8 @@ namespace JeoTechMiningSystem1
 
                         if (!h.IsEvacuating)
                         {
-                            double etaMins = Math.Round(result.Distance / 50.0, 1);
+                            double currentSpeedMtPerMin = (h.HeartRate >= 120) ? 35.0 : 50.0;
+                            double etaMins = Math.Round(result.Distance / currentSpeedMtPerMin, 1);
                             _lblETA.Text = $"{Math.Round(result.Distance, 0)}m | ETA: {etaMins} dk";
                         }
 
@@ -1519,6 +1586,8 @@ namespace JeoTechMiningSystem1
 
         private bool ShowManualDecisionPopup(string sensorName, string anomalyName)
         {
+            _isPopupOpen = true; // SİSTEMİ YENİ POPUPLARA KARŞI KİLİTLE
+
             Form popup = new Form();
             popup.Size = new Size(500, 260);
             popup.BackColor = Color.FromArgb(20, 5, 5);
@@ -1554,7 +1623,9 @@ namespace JeoTechMiningSystem1
             btnWait.Click += (s, e) => { decision = false; popup.Close(); };
             border.Controls.Add(btnWait);
 
-            popup.ShowDialog();
+            popup.ShowDialog(); // Kullanıcı bir tuşa basana kadar kod burada bekler
+
+            _isPopupOpen = false; // POPUP KAPANINCA KİLİDİ AÇ
             return decision;
         }
 
@@ -1592,8 +1663,24 @@ namespace JeoTechMiningSystem1
 
         private void Log(string message)
         {
-            if (_rtbLog.TextLength > 10000) _rtbLog.Clear();
+            if (_rtbLog.TextLength > 10000)
+            {
+                int breakIndex = _rtbLog.Text.IndexOf('\n', 2000);
+                if (breakIndex > 0)
+                {
+                    _rtbLog.Select(0, breakIndex + 1);
+                    _rtbLog.ReadOnly = false;
+                    _rtbLog.SelectedText = "";
+                    _rtbLog.ReadOnly = true;
+                }
+                else
+                {
+                    _rtbLog.Clear();
+                }
+            }
+
             _rtbLog.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}\n");
+            _rtbLog.SelectionStart = _rtbLog.TextLength;
             _rtbLog.ScrollToCaret();
 
             _csvLogData.Add($"{DateTime.Now:dd.MM.yyyy HH:mm:ss};{message.Replace(";", ",")}");
