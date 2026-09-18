@@ -695,10 +695,10 @@ namespace JeoTechMiningSystem1
             _evacuationTimer = new Timer { Interval = 50 };
             _evacuationTimer.Tick += EvacuationTimer_Tick;
 
-            _realSensorData["IoT-01"] = new SensorData { ModuleId = "IoT-01", Gas = 0.16, Temperature = 22.4 };
-            _realSensorData["IoT-02"] = new SensorData { ModuleId = "IoT-02", Gas = 0.16, Temperature = 22.4 };
-            _realSensorData["IoT-03"] = new SensorData { ModuleId = "IoT-03", Gas = 0.16, Temperature = 22.4 };
-            _realSensorData["IoT-04"] = new SensorData { ModuleId = "IoT-04", Gas = 0.16, Temperature = 22.4 };
+            _realSensorData["IoT-01"] = new SensorData { ModuleId = "IoT-01", Gas = 150, Temperature = 200 };
+            _realSensorData["IoT-02"] = new SensorData { ModuleId = "IoT-02", Gas = 150, Temperature = 200 };
+            _realSensorData["IoT-03"] = new SensorData { ModuleId = "IoT-03", Gas = 150, Temperature = 200 };
+            _realSensorData["IoT-04"] = new SensorData { ModuleId = "IoT-04", Gas = 150, Temperature = 200 };
         }
 
         private void LoadComPorts()
@@ -850,8 +850,9 @@ namespace JeoTechMiningSystem1
 
                 if (!kvp.Value.IsDisconnected)
                 {
-                    if (kvp.Value.Gas >= 1.5) _anomalies[iot].Add("Gas");
-                    if (kvp.Value.Temperature >= 45.0) _anomalies[iot].Add("Temp");
+                    // 🔴 DÜZELTME: Eşikleri Sena'nın Arduino koduna (400) göre güncelledik
+                    if (kvp.Value.Gas >= 400.0) _anomalies[iot].Add("Gas");
+                    if (kvp.Value.Temperature >= 400.0) _anomalies[iot].Add("Temp");
                 }
             }
 
@@ -874,8 +875,9 @@ namespace JeoTechMiningSystem1
                 }
                 else
                 {
-                    _dgvSensors.Rows[i].Cells[2].Value = $"%{_realSensorData[iot].Gas:F2}";
-                    _dgvSensors.Rows[i].Cells[3].Value = $"{_realSensorData[iot].Temperature:F1}°C";
+                    // Tabloya Arduino'dan gelen ham analog değeri yazdır
+                    _dgvSensors.Rows[i].Cells[2].Value = $"{_realSensorData[iot].Gas}";
+                    _dgvSensors.Rows[i].Cells[3].Value = $"{_realSensorData[iot].Temperature}";
                     _dgvSensors.Rows[i].DefaultCellStyle.ForeColor = Color.White;
                 }
 
@@ -902,11 +904,10 @@ namespace JeoTechMiningSystem1
                         if (!_handledSingleAnomalies.Contains(iot) && !_isPopupOpen)
                         {
                             _handledSingleAnomalies.Add(iot);
-                            _systemTimer.Stop();
                             _isPopupOpen = true;
 
                             string anomType = anom.First();
-                            string trAnom = anomType == "Gas" ? "MQ-4 Metan Uyarısı (%1.5 Sınırı Aşıldı)" : "LM35 Sıcaklık Uyarısı (45°C Aşıldı)";
+                            string trAnom = anomType == "Gas" ? "MQ-4 Metan Uyarısı (Eşik: 400 Aşıldı)" : "Sıcaklık Uyarısı (Eşik: 400 Aşıldı)";
 
                             bool evacuate = ShowManualDecisionPopup(iot, trAnom);
 
@@ -920,7 +921,6 @@ namespace JeoTechMiningSystem1
                             }
 
                             _isPopupOpen = false;
-                            _systemTimer.Start();
                         }
 
                         if (_manualOverrides.Contains(iot))
@@ -1028,8 +1028,8 @@ namespace JeoTechMiningSystem1
 
                     double edgeDistMeters = Math.Sqrt(Math.Pow(n1.X - n2.X, 2) + Math.Pow(n1.Y - n2.Y, 2));
 
-                    // BİYOMETRİK YÜRÜME HIZI (m/dk)
-                    double currentSpeedMtPerMin = (h.HeartRate >= 120) ? 35.0 : 50.0;
+                    double currentSpeedMtPerMin = 50.0;
+                    if (h.HeartRate >= 120) currentSpeedMtPerMin = 35.0;
 
                     double speedMtPerSec = (currentSpeedMtPerMin / 60.0) * 15.0;
                     double moveAmt = speedMtPerSec * (_evacuationTimer.Interval / 1000.0);
@@ -1094,7 +1094,6 @@ namespace JeoTechMiningSystem1
                     if (h.OfkSecondsRemaining < 0) h.OfkSecondsRemaining = 0;
                 }
 
-                // BİYOMETRİK NABIZ SİMÜLASYONU
                 if (h.IsFallen) h.HeartRate = _rnd.Next(135, 148);
                 else if (h.IsTrapped) h.HeartRate = _rnd.Next(125, 138);
                 else if (h.IsEvacuating) h.HeartRate = _rnd.Next(105, 118);
@@ -1104,10 +1103,11 @@ namespace JeoTechMiningSystem1
 
             if (_dgvSensors.Rows.Count == 0)
             {
-                _dgvSensors.Rows.Add("IoT-01", "N3", "%0,16", "22,4°C", "NORMAL");
-                _dgvSensors.Rows.Add("IoT-02", "N6", "%0,16", "22,4°C", "NORMAL");
-                _dgvSensors.Rows.Add("IoT-03", "N8", "%0,16", "22,4°C", "NORMAL");
-                _dgvSensors.Rows.Add("IoT-04", "N10", "%0,16", "22,4°C", "NORMAL");
+                // Simülasyonda da raw (ham) değer gösterimi
+                _dgvSensors.Rows.Add("IoT-01", "N3", "150", "200", "NORMAL");
+                _dgvSensors.Rows.Add("IoT-02", "N6", "150", "200", "NORMAL");
+                _dgvSensors.Rows.Add("IoT-03", "N8", "150", "200", "NORMAL");
+                _dgvSensors.Rows.Add("IoT-04", "N10", "150", "200", "NORMAL");
             }
 
             if (_isRealHardwareMode)
@@ -1148,11 +1148,11 @@ namespace JeoTechMiningSystem1
                 string iot = _dgvSensors.Rows[i].Cells[0].Value.ToString();
                 var anom = _anomalies[iot];
 
-                string ch4 = "%0,16";
-                string temp = "22,4°C";
+                string ch4 = "150";
+                string temp = "200";
 
-                if (anom.Contains("Gas")) ch4 = "%1,80";
-                if (anom.Contains("Temp")) temp = "48,5°C";
+                if (anom.Contains("Gas")) ch4 = "450";
+                if (anom.Contains("Temp")) temp = "450";
 
                 _dgvSensors.Rows[i].Cells[2].Value = ch4;
                 _dgvSensors.Rows[i].Cells[3].Value = temp;
@@ -1184,7 +1184,7 @@ namespace JeoTechMiningSystem1
                             _isPopupOpen = true;
 
                             string anomType = anom.First();
-                            string trAnom = anomType == "Gas" ? "MQ-4 Metan Uyarısı (%1.0 Sınırı Aşıldı)" : (anomType == "Temp" ? "LM35 Sıcaklık Uyarısı (35°C Aşıldı)" : "MPU6050 Göçük/Sarsıntı");
+                            string trAnom = anomType == "Gas" ? "MQ-4 Metan Uyarısı (Eşik: 400 Aşıldı)" : "Sıcaklık Uyarısı (Eşik: 400 Aşıldı)";
 
                             bool evacuate = ShowManualDecisionPopup(iot, trAnom);
 
@@ -1324,7 +1324,9 @@ namespace JeoTechMiningSystem1
 
             if (exitRoute.Success)
             {
-                double currentSpeedMtPerMin = (h.HeartRate >= 120) ? 35.0 : 50.0;
+                double currentSpeedMtPerMin = 50.0;
+                if (h.HeartRate >= 120) currentSpeedMtPerMin = 35.0;
+
                 double etaMins = exitRoute.Distance / currentSpeedMtPerMin;
                 double requiredOfkSecs = etaMins * 60;
                 double requiredBattery = requiredOfkSecs * 0.05;
@@ -1359,10 +1361,8 @@ namespace JeoTechMiningSystem1
             float dx2 = next.X - curr.X;
             float dy2 = next.Y - curr.Y;
 
-            // Eğer hareket yoksa veya hedefe çok yaklaşıldıysa dur
             if (Math.Abs(dx2) < 3f && Math.Abs(dy2) < 3f) return "DUR";
 
-            // Önceki düğüm yoksa (başlangıç anı), doğrudan hedefin X ve Y eksenine göre karar ver
             if (prev == null || (Math.Abs(curr.X - prev.X) < 1f && Math.Abs(curr.Y - prev.Y) < 1f))
             {
                 if (Math.Abs(dx2) > Math.Abs(dy2)) return dx2 > 0 ? "SAĞA DÖN" : "SOLA DÖN";
@@ -1377,12 +1377,10 @@ namespace JeoTechMiningSystem1
 
             double angle = Math.Atan2(cross, dot) * (180.0 / Math.PI);
 
-            // 65 dereceye kadar olan sapmaları ufak tünel kıvrımı sayıp DÜZ kabul et
             if (Math.Abs(angle) <= 65)
             {
                 return "DÜZ DEVAM ET";
             }
-            // Sadece 65 dereceden büyük net dönüşlerde baret titreşsin
             else if (angle > 65)
             {
                 return "SAĞA DÖN";
@@ -1545,7 +1543,9 @@ namespace JeoTechMiningSystem1
 
                         if (!h.IsEvacuating)
                         {
-                            double currentSpeedMtPerMin = (h.HeartRate >= 120) ? 35.0 : 50.0;
+                            double currentSpeedMtPerMin = 50.0;
+                            if (h.HeartRate >= 120) currentSpeedMtPerMin = 35.0;
+
                             double etaMins = Math.Round(result.Distance / currentSpeedMtPerMin, 1);
                             _lblETA.Text = $"{Math.Round(result.Distance, 0)}m | ETA: {etaMins} dk";
                         }
