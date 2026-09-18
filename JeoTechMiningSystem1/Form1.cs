@@ -35,10 +35,12 @@ namespace JeoTechMiningSystem1
         private CheckBox _chkGas, _chkTemp, _chkCollapse;
         private ListBox _lstEvacuated;
 
-        // KABLO HATASI VE SPAM BİLDİRİM DEĞİŞKENLERİ
+        // KABLO HATASI BİLDİRİM DEĞİŞKENLERİ
         private Label _lblHardwareWarning;
         private bool _hasShownErrorPopup = false;
-        private bool _isPopupOpen = false; // POPUP SPAM KİLİDİ
+
+        // POPUP SPAM KİLİDİ (Ekranda aynı anda sadece 1 onay kutusu çıkmasını sağlar)
+        private bool _isPopupOpen = false;
 
         // YÖN GÖSTERGELERİ (4'LÜ SİSTEM)
         private Label _lblDirLeft, _lblDirForward, _lblDirRight, _lblDirStop;
@@ -106,8 +108,10 @@ namespace JeoTechMiningSystem1
             public string ModuleId { get; set; }
             public double Gas { get; set; }
             public double Temperature { get; set; }
-            // WATCHDOG: Sensörün en son ne zaman veri gönderdiği
+
+            // WATCHDOG ZAMANLAYICISI (Sensörün son görülme anı ve kopma durumu)
             public DateTime LastSeen { get; set; } = DateTime.Now;
+            public bool IsDisconnected { get; set; } = false;
         }
 
         private Random _rnd = new Random();
@@ -154,6 +158,7 @@ namespace JeoTechMiningSystem1
             _btnConnectHardware = new Button { Text = "BAĞLAN", BackColor = Color.SeaGreen, ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9, FontStyle.Bold), Size = new Size(100, 35), Visible = false };
             _cmbComPorts = new ComboBox { Width = 80, DropDownStyle = ComboBoxStyle.DropDownList, Visible = false, Margin = new Padding(5, 7, 5, 0) };
 
+            // SAĞ ÜSTTEKİ DONANIM UYARI ETİKETİ (Gizli Başlar)
             _lblHardwareWarning = new Label
             {
                 Text = "⚠️ KABLO TEMASSIZLIĞI (VERİ EKSİK)",
@@ -180,8 +185,16 @@ namespace JeoTechMiningSystem1
                 _helmetsList.Clear();
                 _cmbLeftHelmets.Items.Clear();
 
+                // Mod değiştiğinde uyarıları ve watchdog'u sıfırla
                 _hasShownErrorPopup = false;
                 _lblHardwareWarning.Visible = false;
+                _isPopupOpen = false;
+
+                foreach (var kvp in _realSensorData)
+                {
+                    kvp.Value.LastSeen = DateTime.Now;
+                    kvp.Value.IsDisconnected = false;
+                }
 
                 if (_isRealHardwareMode)
                 {
@@ -197,9 +210,6 @@ namespace JeoTechMiningSystem1
                     _helmetsList.Add(new HelmetData { Id = "H-01", Name = "Sude Şenol", NodeId = "IoT-01", PreviousNodeId = "", Battery = 92.5, HeartRate = 78 });
                     _helmetsList.Add(new HelmetData { Id = "H-02", Name = "Sena Doğan", NodeId = "N5", PreviousNodeId = "", Battery = 85.0, HeartRate = 82 });
                     _helmetsList.Add(new HelmetData { Id = "H-03", Name = "Kübra Sağır", NodeId = "N4", PreviousNodeId = "", Battery = 98.0, HeartRate = 75 });
-
-                    // Gerçek donanım moduna geçildiğinde tüm Watchdog sürelerini sıfırla
-                    foreach (var kvp in _realSensorData) kvp.Value.LastSeen = DateTime.Now;
 
                     Log("[SİSTEM] Gerçek Donanım moduna geçildi. Manuel butonlar kapatıldı. Arduino COM Portunu seçip bağlanın.");
                 }
@@ -529,6 +539,7 @@ namespace JeoTechMiningSystem1
 
                 _hasShownErrorPopup = false;
                 _lblHardwareWarning.Visible = false;
+                _isPopupOpen = false;
 
                 _evacuationTimer.Stop();
                 _lblSystemStatus.Text = "SİSTEM DURUMU: OTONOM İZLEMEDE";
@@ -747,8 +758,6 @@ namespace JeoTechMiningSystem1
                 this.BeginInvoke(new Action(() => {
                     _lblHardwareWarning.Visible = true;
                     Log("[UYARI] Sensörden eksik veya bozuk veri geldi! Kabloları kontrol edin.");
-
-                    MessageBox.Show("Sensörlerden eksik veya bozuk veri alınıyor!\n\nLütfen Arduino ve modül kablolarını (temassızlık ihtimaline karşı) kontrol edin.\n\nSiz kabloyu düzeltene kadar ekranın sağ üst köşesinde küçük bir uyarı kalacaktır. Bağlantı düzeldiğinde uyarı otomatik kapanır.", "Kablo Temassızlığı Uyarısı", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }));
             }
         }
@@ -809,7 +818,6 @@ namespace JeoTechMiningSystem1
                             _realSensorData[moduleId].Gas = gas;
                             _realSensorData[moduleId].Temperature = temp;
 
-                            // WATCHDOG KİLİDİ: Sensörden sağlam veri geldiği an "Son Görülme Zamanı" güncellenir
                             _realSensorData[moduleId].LastSeen = DateTime.Now;
 
                             this.Invoke(new Action(() => {
@@ -840,8 +848,11 @@ namespace JeoTechMiningSystem1
                 string iot = kvp.Key;
                 _anomalies[iot].Clear();
 
-                if (kvp.Value.Gas >= 1.5) _anomalies[iot].Add("Gas");
-                if (kvp.Value.Temperature >= 45.0) _anomalies[iot].Add("Temp");
+                if (!kvp.Value.IsDisconnected)
+                {
+                    if (kvp.Value.Gas >= 1.5) _anomalies[iot].Add("Gas");
+                    if (kvp.Value.Temperature >= 45.0) _anomalies[iot].Add("Temp");
+                }
             }
 
             bool dangerDetected = false;
@@ -849,18 +860,24 @@ namespace JeoTechMiningSystem1
             for (int i = 0; i < _dgvSensors.Rows.Count; i++)
             {
                 string iot = _dgvSensors.Rows[i].Cells[0].Value.ToString();
-
-                // WATCHDOG KONTROLÜ: 10 saniyeden uzun süredir veri gelmeyen ölü sensörler HardwareDataEvaluation'ı çalıştırmasın, SystemTimer onu halledecek.
-                if (_isRealHardwareMode && (DateTime.Now - _realSensorData[iot].LastSeen).TotalSeconds > 10)
-                {
-                    continue;
-                }
-
                 var anom = _anomalies[iot];
 
-                _dgvSensors.Rows[i].Cells[2].Value = $"%{_realSensorData[iot].Gas:F2}";
-                _dgvSensors.Rows[i].Cells[3].Value = $"{_realSensorData[iot].Temperature:F1}°C";
-                _dgvSensors.Rows[i].DefaultCellStyle.ForeColor = Color.White; // Eğer önceden sarı olduysa beyaza çevir
+                if (_realSensorData[iot].IsDisconnected)
+                {
+                    _dgvSensors.Rows[i].Cells[2].Value = "-";
+                    _dgvSensors.Rows[i].Cells[3].Value = "-";
+                    _dgvSensors.Rows[i].Cells[4].Value = "SİNYAL YOK";
+                    _dgvSensors.Rows[i].DefaultCellStyle.BackColor = Color.FromArgb(60, 60, 60);
+                    _dgvSensors.Rows[i].DefaultCellStyle.ForeColor = Color.Orange;
+                    _graph.Nodes[iot].IsDangerous = false;
+                    continue;
+                }
+                else
+                {
+                    _dgvSensors.Rows[i].Cells[2].Value = $"%{_realSensorData[iot].Gas:F2}";
+                    _dgvSensors.Rows[i].Cells[3].Value = $"{_realSensorData[iot].Temperature:F1}°C";
+                    _dgvSensors.Rows[i].DefaultCellStyle.ForeColor = Color.White;
+                }
 
                 if (anom.Count == 0)
                 {
@@ -882,12 +899,11 @@ namespace JeoTechMiningSystem1
                     }
                     else if (anom.Count == 1)
                     {
-                        if (!_handledSingleAnomalies.Contains(iot))
+                        if (!_handledSingleAnomalies.Contains(iot) && !_isPopupOpen)
                         {
-                            // POPUP SPAM KİLİDİ: Zaten ekranda bir popup açıksa arkadan yeni uyarılarla programı kilitleme!
-                            if (_isPopupOpen) continue;
-
                             _handledSingleAnomalies.Add(iot);
+                            _systemTimer.Stop();
+                            _isPopupOpen = true;
 
                             string anomType = anom.First();
                             string trAnom = anomType == "Gas" ? "MQ-4 Metan Uyarısı (%1.5 Sınırı Aşıldı)" : "LM35 Sıcaklık Uyarısı (45°C Aşıldı)";
@@ -902,6 +918,9 @@ namespace JeoTechMiningSystem1
                             {
                                 _manualOverrides.Remove(iot);
                             }
+
+                            _isPopupOpen = false;
+                            _systemTimer.Start();
                         }
 
                         if (_manualOverrides.Contains(iot))
@@ -1009,6 +1028,7 @@ namespace JeoTechMiningSystem1
 
                     double edgeDistMeters = Math.Sqrt(Math.Pow(n1.X - n2.X, 2) + Math.Pow(n1.Y - n2.Y, 2));
 
+                    // BİYOMETRİK YÜRÜME HIZI (m/dk)
                     double currentSpeedMtPerMin = (h.HeartRate >= 120) ? 35.0 : 50.0;
 
                     double speedMtPerSec = (currentSpeedMtPerMin / 60.0) * 15.0;
@@ -1074,6 +1094,7 @@ namespace JeoTechMiningSystem1
                     if (h.OfkSecondsRemaining < 0) h.OfkSecondsRemaining = 0;
                 }
 
+                // BİYOMETRİK NABIZ SİMÜLASYONU
                 if (h.IsFallen) h.HeartRate = _rnd.Next(135, 148);
                 else if (h.IsTrapped) h.HeartRate = _rnd.Next(125, 138);
                 else if (h.IsEvacuating) h.HeartRate = _rnd.Next(105, 118);
@@ -1091,48 +1112,35 @@ namespace JeoTechMiningSystem1
 
             if (_isRealHardwareMode)
             {
-                // WATCHDOG (Bekçi Köpeği) KONTROLÜ
-                // Eğer bir sensörden 10 saniyeden uzun süredir haber alınamıyorsa, o sensörü ölü kabul et!
-                bool needsUpdate = false;
+                bool needsGridUpdate = false;
                 foreach (var kvp in _realSensorData)
                 {
-                    if ((DateTime.Now - kvp.Value.LastSeen).TotalSeconds > 10)
+                    bool currentlyDisconnected = (DateTime.Now - kvp.Value.LastSeen).TotalSeconds > 10;
+                    if (currentlyDisconnected && !kvp.Value.IsDisconnected)
                     {
-                        for (int i = 0; i < _dgvSensors.Rows.Count; i++)
-                        {
-                            if (_dgvSensors.Rows[i].Cells[0].Value.ToString() == kvp.Key)
-                            {
-                                if (_dgvSensors.Rows[i].Cells[4].Value.ToString() != "SİNYAL YOK")
-                                {
-                                    _dgvSensors.Rows[i].Cells[2].Value = "KOPTU";
-                                    _dgvSensors.Rows[i].Cells[3].Value = "KOPTU";
-                                    _dgvSensors.Rows[i].Cells[4].Value = "SİNYAL YOK";
-                                    _dgvSensors.Rows[i].DefaultCellStyle.BackColor = Color.FromArgb(60, 60, 60); // Sönük Gri
-                                    _dgvSensors.Rows[i].DefaultCellStyle.ForeColor = Color.Yellow; // Dikkat çekici Sarı
-
-                                    // Ölü bir sensör tehlike yaratıp haritayı kilitlemesin diye false bırakılır.
-                                    _graph.Nodes[kvp.Key].IsDangerous = false;
-                                    needsUpdate = true;
-
-                                    Log($"[KRİTİK UYARI] {kvp.Key} sensöründen veri gelmiyor (Bağlantı kopmuş veya sensör kapanmış)!");
-                                }
-                                break;
-                            }
-                        }
+                        kvp.Value.IsDisconnected = true;
+                        Log($"[WATCHDOG ALARMI] {kvp.Key} sensörü koptu! 10 saniyedir sinyal alınamıyor.");
+                        needsGridUpdate = true;
+                    }
+                    else if (!currentlyDisconnected && kvp.Value.IsDisconnected)
+                    {
+                        kvp.Value.IsDisconnected = false;
+                        Log($"[SİSTEM] {kvp.Key} sensörü tekrar bağlandı. Veri akışı devam ediyor.");
+                        needsGridUpdate = true;
                     }
                 }
 
-                if (needsUpdate)
+                if (needsGridUpdate)
                 {
-                    RecalculateRoute();
-                    UpdateHelmetTable();
-                    _mapControl.Invalidate();
+                    HardwareDataEvaluation();
                 }
 
+                RecalculateRoute();
+                UpdateHelmetTable();
+                _mapControl.Invalidate();
                 return;
             }
 
-            // AŞAĞISI SADECE SİMÜLASYON MODU İÇİNDİR
             bool dangerDetected = false;
 
             for (int i = 0; i < _dgvSensors.Rows.Count; i++)
@@ -1169,13 +1177,12 @@ namespace JeoTechMiningSystem1
                     }
                     else if (anom.Count == 1)
                     {
-                        if (!_handledSingleAnomalies.Contains(iot))
+                        if (!_handledSingleAnomalies.Contains(iot) && !_isPopupOpen)
                         {
-                            // POPUP SPAM KİLİDİ
-                            if (_isPopupOpen) continue;
-
                             _handledSingleAnomalies.Add(iot);
                             _systemTimer.Stop();
+                            _isPopupOpen = true;
+
                             string anomType = anom.First();
                             string trAnom = anomType == "Gas" ? "MQ-4 Metan Uyarısı (%1.0 Sınırı Aşıldı)" : (anomType == "Temp" ? "LM35 Sıcaklık Uyarısı (35°C Aşıldı)" : "MPU6050 Göçük/Sarsıntı");
 
@@ -1189,6 +1196,8 @@ namespace JeoTechMiningSystem1
                             {
                                 _manualOverrides.Remove(iot);
                             }
+
+                            _isPopupOpen = false;
                             _systemTimer.Start();
                         }
 
@@ -1350,8 +1359,10 @@ namespace JeoTechMiningSystem1
             float dx2 = next.X - curr.X;
             float dy2 = next.Y - curr.Y;
 
+            // Eğer hareket yoksa veya hedefe çok yaklaşıldıysa dur
             if (Math.Abs(dx2) < 3f && Math.Abs(dy2) < 3f) return "DUR";
 
+            // Önceki düğüm yoksa (başlangıç anı), doğrudan hedefin X ve Y eksenine göre karar ver
             if (prev == null || (Math.Abs(curr.X - prev.X) < 1f && Math.Abs(curr.Y - prev.Y) < 1f))
             {
                 if (Math.Abs(dx2) > Math.Abs(dy2)) return dx2 > 0 ? "SAĞA DÖN" : "SOLA DÖN";
@@ -1366,10 +1377,12 @@ namespace JeoTechMiningSystem1
 
             double angle = Math.Atan2(cross, dot) * (180.0 / Math.PI);
 
+            // 65 dereceye kadar olan sapmaları ufak tünel kıvrımı sayıp DÜZ kabul et
             if (Math.Abs(angle) <= 65)
             {
                 return "DÜZ DEVAM ET";
             }
+            // Sadece 65 dereceden büyük net dönüşlerde baret titreşsin
             else if (angle > 65)
             {
                 return "SAĞA DÖN";
@@ -1586,8 +1599,6 @@ namespace JeoTechMiningSystem1
 
         private bool ShowManualDecisionPopup(string sensorName, string anomalyName)
         {
-            _isPopupOpen = true; // SİSTEMİ YENİ POPUPLARA KARŞI KİLİTLE
-
             Form popup = new Form();
             popup.Size = new Size(500, 260);
             popup.BackColor = Color.FromArgb(20, 5, 5);
@@ -1623,9 +1634,7 @@ namespace JeoTechMiningSystem1
             btnWait.Click += (s, e) => { decision = false; popup.Close(); };
             border.Controls.Add(btnWait);
 
-            popup.ShowDialog(); // Kullanıcı bir tuşa basana kadar kod burada bekler
-
-            _isPopupOpen = false; // POPUP KAPANINCA KİLİDİ AÇ
+            popup.ShowDialog();
             return decision;
         }
 
