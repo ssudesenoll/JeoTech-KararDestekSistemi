@@ -7,6 +7,7 @@ using System.IO.Ports;
 using System.IO;
 using System.Text;
 using System.Media;
+using System.Diagnostics; // PERFORMANS ÖLÇÜMÜ İÇİN EKLENDİ
 using JeoTechMiningSystem1.Algorithms;
 using JeoTechMiningSystem1.Models;
 using JeoTechMiningSystem1.Services;
@@ -39,10 +40,10 @@ namespace JeoTechMiningSystem1
         private Label _lblHardwareWarning;
         private bool _hasShownErrorPopup = false;
 
-        // POPUP SPAM KİLİDİ (Ekranda aynı anda sadece 1 onay kutusu çıkmasını sağlar)
+        // POPUP SPAM KİLİDİ
         private bool _isPopupOpen = false;
 
-        // YÖN GÖSTERGELERİ (4'LÜ SİSTEM)
+        // YÖN GÖSTERGELERİ
         private Label _lblDirLeft, _lblDirForward, _lblDirRight, _lblDirStop;
 
         private Panel _pnlSimControls;
@@ -53,10 +54,10 @@ namespace JeoTechMiningSystem1
 
         private List<HelmetData> _helmetsList;
 
-        // VERİ KAYDI / RAPORLAMA LİSTESİ
+        // VERİ KAYDI
         private List<string> _csvLogData = new List<string>();
 
-        // İŞİTSEL ALARM (SİREN) DEĞİŞKENLERİ
+        // SİREN
         private SoundPlayer _sirenPlayer;
         private bool _isSirenPlaying = false;
 
@@ -109,7 +110,7 @@ namespace JeoTechMiningSystem1
             public double Gas { get; set; }
             public double Temperature { get; set; }
 
-            // WATCHDOG ZAMANLAYICISI (Sensörün son görülme anı ve kopma durumu)
+            // WATCHDOG ZAMANLAYICISI
             public DateTime LastSeen { get; set; } = DateTime.Now;
             public bool IsDisconnected { get; set; } = false;
         }
@@ -158,7 +159,6 @@ namespace JeoTechMiningSystem1
             _btnConnectHardware = new Button { Text = "BAĞLAN", BackColor = Color.SeaGreen, ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Font = new Font("Segoe UI", 9, FontStyle.Bold), Size = new Size(100, 35), Visible = false };
             _cmbComPorts = new ComboBox { Width = 80, DropDownStyle = ComboBoxStyle.DropDownList, Visible = false, Margin = new Padding(5, 7, 5, 0) };
 
-            // SAĞ ÜSTTEKİ DONANIM UYARI ETİKETİ (Gizli Başlar)
             _lblHardwareWarning = new Label
             {
                 Text = "⚠️ KABLO TEMASSIZLIĞI (VERİ EKSİK)",
@@ -185,7 +185,6 @@ namespace JeoTechMiningSystem1
                 _helmetsList.Clear();
                 _cmbLeftHelmets.Items.Clear();
 
-                // Mod değiştiğinde uyarıları ve watchdog'u sıfırla
                 _hasShownErrorPopup = false;
                 _lblHardwareWarning.Visible = false;
                 _isPopupOpen = false;
@@ -457,7 +456,8 @@ namespace JeoTechMiningSystem1
             };
             _pnlSimControls.Controls.Add(btnFall);
 
-            Panel pnlBaretControls = new Panel { Size = new Size(250, 110), Margin = new Padding(0) };
+            // Baret Taşıma, Sıfırlama ve PERFORMANS Testi Alanı
+            Panel pnlBaretControls = new Panel { Size = new Size(250, 145), Margin = new Padding(0) }; // Boyutu artırıldı
             pnlInjector.Controls.Add(pnlBaretControls);
 
             pnlBaretControls.Controls.Add(new Label { Text = "Konum (Baret):", ForeColor = Color.White, Location = new Point(5, 8), AutoSize = true });
@@ -563,6 +563,21 @@ namespace JeoTechMiningSystem1
                 }
             };
             pnlBaretControls.Controls.Add(btnExportCsv);
+
+            // --- YENİ EKLENEN: DİJKSTRA PERFORMANS TESTİ BUTONU ---
+            Button btnPerfTest = new Button { Text = "⏱️ Dijkstra Performans Testi (100x)", BackColor = Color.Indigo, ForeColor = Color.White, FlatStyle = FlatStyle.Flat, Location = new Point(5, 110), Size = new Size(240, 26) };
+            btnPerfTest.Click += (s, e) => {
+                var sw = Stopwatch.StartNew();
+                for (int i = 0; i < 100; i++)
+                {
+                    CalculateOptimalRoute("IoT-01", new List<NodeType> { NodeType.MainExit }, false);
+                }
+                sw.Stop();
+                double ortalama = sw.Elapsed.TotalMilliseconds / 100.0;
+                Log($"[PERFORMANS TESTİ] Dijkstra algoritması 100 kez çalıştırıldı. Ortalama hesaplama süresi: {ortalama:F4} milisaniye.");
+                MessageBox.Show($"Dijkstra algoritması başarıyla 100 kez çalıştırıldı.\nOrtalama Rota Hesaplama Süresi: {ortalama:F4} milisaniye.", "Performans Sonucu", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+            pnlBaretControls.Controls.Add(btnPerfTest);
 
             Panel pnlLog = new Panel { Dock = DockStyle.Fill, Padding = new Padding(5) };
             tlpBottom.Controls.Add(pnlLog, 3, 0);
@@ -843,6 +858,9 @@ namespace JeoTechMiningSystem1
 
         private void HardwareDataEvaluation()
         {
+            // --- YENİ EKLENEN: SİSTEM TEPKİ SÜRESİ KRONOMETRESİ ---
+            Stopwatch tepkiSw = Stopwatch.StartNew();
+
             foreach (var kvp in _realSensorData)
             {
                 string iot = kvp.Key;
@@ -850,7 +868,6 @@ namespace JeoTechMiningSystem1
 
                 if (!kvp.Value.IsDisconnected)
                 {
-                    // 🔴 DÜZELTME: Eşikleri Sena'nın Arduino koduna (400) göre güncelledik
                     if (kvp.Value.Gas >= 400.0) _anomalies[iot].Add("Gas");
                     if (kvp.Value.Temperature >= 400.0) _anomalies[iot].Add("Temp");
                 }
@@ -875,7 +892,6 @@ namespace JeoTechMiningSystem1
                 }
                 else
                 {
-                    // Tabloya Arduino'dan gelen ham analog değeri yazdır
                     _dgvSensors.Rows[i].Cells[2].Value = $"{_realSensorData[iot].Gas}";
                     _dgvSensors.Rows[i].Cells[3].Value = $"{_realSensorData[iot].Temperature}";
                     _dgvSensors.Rows[i].DefaultCellStyle.ForeColor = Color.White;
@@ -949,9 +965,14 @@ namespace JeoTechMiningSystem1
                     if (!h.IsFallen && !h.IsEvacuated) h.IsEvacuating = true;
                 }
                 _evacuationTimer.Start();
+
+                // --- YENİ EKLENEN: TEPKİ SÜRESİNİ DURDUR VE LOGLA ---
+                tepkiSw.Stop();
+
                 _lblSystemStatus.Text = "🚨 SİSTEM DURUMU: ACİL TAHLİYE DEVREDE (DONANIM TETİKLEDİ)";
                 _lblSystemStatus.BackColor = Color.DarkRed;
-                Log("[DONANIM TETİKLEMESİ] Gerçek sensörler tehlike algıladı! Tahliye ve titreşimler başlatıldı.");
+                Log($"[DONANIM TETİKLEMESİ] Gerçek sensörler tehlike algıladı! Tahliye başlatıldı.");
+                Log($"[PERFORMANS] Sistem Tepki Süresi (Veri Gelişi -> Alarm Kararı): {tepkiSw.Elapsed.TotalMilliseconds:F4} milisaniye.");
             }
 
             RecalculateRoute();
@@ -959,128 +980,11 @@ namespace JeoTechMiningSystem1
             _mapControl.Invalidate();
         }
 
-        private void SendGuidanceToHardware(string command)
-        {
-            if (_isRealHardwareMode && _serialPort != null && _serialPort.IsOpen)
-            {
-                try
-                {
-                    _serialPort.WriteLine(command);
-                }
-                catch { }
-            }
-        }
-
-        private void UpdateEvacuatedList()
-        {
-            _lstEvacuated.Items.Clear();
-            foreach (var h in _helmetsList)
-            {
-                if (h.IsEvacuated) _lstEvacuated.Items.Add($"✓ {h.Name} ({h.Id}) -> {h.EvacuationPoint}");
-            }
-        }
-
-        private void EvacuationTimer_Tick(object sender, EventArgs e)
-        {
-            bool needsRefresh = false;
-
-            foreach (var h in _helmetsList)
-            {
-                if (h.IsFallen || !h.IsEvacuating || h.IsEvacuated || h.IsTrapped) continue;
-
-                var node = _graph.Nodes[h.NodeId];
-                if (node.Type == NodeType.MainExit || node.Type == NodeType.AlternativeExit || node.Type == NodeType.Shelter)
-                {
-                    h.IsEvacuating = false;
-                    h.IsEvacuated = true;
-                    h.EvacuationPoint = node.Name.Contains("[") ? node.Name.Split('[')[0].Trim() : node.Name.Split('(')[0].Trim();
-                    Log($"✅ [BAŞARILI] {h.Name} güvenli bölgeye ({h.EvacuationPoint}) ulaştı!");
-
-                    if (_isRealHardwareMode && h.Id == "B-01") SendGuidanceToHardware("VIB:SUCCESS");
-
-                    UpdateEvacuatedList();
-                    UpdateHelmetTable();
-                    RecalculateRoute();
-                    needsRefresh = true;
-                    continue;
-                }
-
-                if (string.IsNullOrEmpty(h.TargetNodeId))
-                {
-                    var res = FindBestRouteWithConstraints(h);
-                    h.Route = res;
-
-                    if (res.Success && res.Route.Count > 1)
-                    {
-                        h.TargetNodeId = res.Route[1].Id;
-                        h.EdgeProgress = 0;
-                    }
-                    else
-                    {
-                        h.IsEvacuating = false;
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(h.TargetNodeId))
-                {
-                    MineNode n1 = _graph.Nodes[h.NodeId];
-                    MineNode n2 = _graph.Nodes[h.TargetNodeId];
-
-                    double edgeDistMeters = Math.Sqrt(Math.Pow(n1.X - n2.X, 2) + Math.Pow(n1.Y - n2.Y, 2));
-
-                    double currentSpeedMtPerMin = 50.0;
-                    if (h.HeartRate >= 120) currentSpeedMtPerMin = 35.0;
-
-                    double speedMtPerSec = (currentSpeedMtPerMin / 60.0) * 15.0;
-                    double moveAmt = speedMtPerSec * (_evacuationTimer.Interval / 1000.0);
-
-                    double currentDist = h.EdgeProgress * edgeDistMeters;
-                    currentDist += moveAmt;
-
-                    if (currentDist >= edgeDistMeters)
-                    {
-                        h.PreviousNodeId = h.NodeId;
-                        h.NodeId = h.TargetNodeId;
-                        h.TargetNodeId = "";
-                        h.EdgeProgress = 0;
-
-                        var newNode = _graph.Nodes[h.NodeId];
-                        if (newNode.Type == NodeType.MainExit || newNode.Type == NodeType.AlternativeExit || newNode.Type == NodeType.Shelter)
-                        {
-                            h.IsEvacuating = false;
-                            h.IsEvacuated = true;
-                            h.EvacuationPoint = newNode.Name.Contains("[") ? newNode.Name.Split('[')[0].Trim() : newNode.Name.Split('(')[0].Trim();
-                            Log($"✅ [BAŞARILI] {h.Name} güvenli bölgeye ({h.EvacuationPoint}) ulaştı!");
-
-                            if (_isRealHardwareMode && h.Id == "B-01") SendGuidanceToHardware("VIB:SUCCESS");
-
-                            UpdateEvacuatedList();
-                        }
-                        RecalculateRoute();
-                    }
-                    else
-                    {
-                        h.EdgeProgress = currentDist / edgeDistMeters;
-
-                        HelmetData selectedLeftPanelHelmet = _cmbLeftHelmets.SelectedItem as HelmetData;
-                        if (selectedLeftPanelHelmet != null && selectedLeftPanelHelmet.Id == h.Id && h.Route != null && h.Route.Success)
-                        {
-                            double covered = edgeDistMeters * h.EdgeProgress;
-                            double remainingMeters = Math.Max(0, h.Route.Distance - covered);
-
-                            double etaMins = remainingMeters / currentSpeedMtPerMin;
-                            _lblETA.Text = $"{remainingMeters:F1}m | ETA: {etaMins:F1} dk";
-                        }
-                    }
-                    needsRefresh = true;
-                }
-            }
-
-            if (needsRefresh) _mapControl.Invalidate();
-        }
-
         private void SystemTimer_Tick(object sender, EventArgs e)
         {
+            // --- YENİ EKLENEN: SİSTEM TEPKİ SÜRESİ KRONOMETRESİ (SİMÜLASYON İÇİN) ---
+            Stopwatch tepkiSw = Stopwatch.StartNew();
+
             foreach (var h in _helmetsList)
             {
                 double dropRate = h.IsEvacuating ? 0.05 : 0.02;
@@ -1103,7 +1007,6 @@ namespace JeoTechMiningSystem1
 
             if (_dgvSensors.Rows.Count == 0)
             {
-                // Simülasyonda da raw (ham) değer gösterimi
                 _dgvSensors.Rows.Add("IoT-01", "N3", "150", "200", "NORMAL");
                 _dgvSensors.Rows.Add("IoT-02", "N6", "150", "200", "NORMAL");
                 _dgvSensors.Rows.Add("IoT-03", "N8", "150", "200", "NORMAL");
@@ -1227,9 +1130,14 @@ namespace JeoTechMiningSystem1
                     if (!h.IsFallen && !h.IsEvacuated) h.IsEvacuating = true;
                 }
                 _evacuationTimer.Start();
+
+                // --- YENİ EKLENEN: TEPKİ SÜRESİNİ DURDUR VE LOGLA (SİMÜLASYON) ---
+                tepkiSw.Stop();
+
                 _lblSystemStatus.Text = "🚨 SİSTEM DURUMU: ACİL TAHLİYE DEVREDE";
                 _lblSystemStatus.BackColor = Color.DarkRed;
                 Log("[OTONOM KONTROL] Maden genelinde tehlike algılandı! Sistem tahliyeyi OTOMATİK başlattı.");
+                Log($"[PERFORMANS] Sistem Tepki Süresi (Veri Gelişi -> Alarm Kararı): {tepkiSw.Elapsed.TotalMilliseconds:F4} milisaniye.");
             }
 
             RecalculateRoute();
@@ -1693,6 +1601,126 @@ namespace JeoTechMiningSystem1
             _rtbLog.ScrollToCaret();
 
             _csvLogData.Add($"{DateTime.Now:dd.MM.yyyy HH:mm:ss};{message.Replace(";", ",")}");
+        }
+
+        private void SendGuidanceToHardware(string command)
+        {
+            if (_isRealHardwareMode && _serialPort != null && _serialPort.IsOpen)
+            {
+                try
+                {
+                    _serialPort.WriteLine(command);
+                }
+                catch { }
+            }
+        }
+
+        private void UpdateEvacuatedList()
+        {
+            _lstEvacuated.Items.Clear();
+            foreach (var h in _helmetsList)
+            {
+                if (h.IsEvacuated) _lstEvacuated.Items.Add($"✓ {h.Name} ({h.Id}) -> {h.EvacuationPoint}");
+            }
+        }
+
+        private void EvacuationTimer_Tick(object sender, EventArgs e)
+        {
+            bool needsRefresh = false;
+
+            foreach (var h in _helmetsList)
+            {
+                if (h.IsFallen || !h.IsEvacuating || h.IsEvacuated || h.IsTrapped) continue;
+
+                var node = _graph.Nodes[h.NodeId];
+                if (node.Type == NodeType.MainExit || node.Type == NodeType.AlternativeExit || node.Type == NodeType.Shelter)
+                {
+                    h.IsEvacuating = false;
+                    h.IsEvacuated = true;
+                    h.EvacuationPoint = node.Name.Contains("[") ? node.Name.Split('[')[0].Trim() : node.Name.Split('(')[0].Trim();
+                    Log($"✅ [BAŞARILI] {h.Name} güvenli bölgeye ({h.EvacuationPoint}) ulaştı!");
+
+                    if (_isRealHardwareMode && h.Id == "B-01") SendGuidanceToHardware("VIB:SUCCESS");
+
+                    UpdateEvacuatedList();
+                    UpdateHelmetTable();
+                    RecalculateRoute();
+                    needsRefresh = true;
+                    continue;
+                }
+
+                if (string.IsNullOrEmpty(h.TargetNodeId))
+                {
+                    var res = FindBestRouteWithConstraints(h);
+                    h.Route = res;
+
+                    if (res.Success && res.Route.Count > 1)
+                    {
+                        h.TargetNodeId = res.Route[1].Id;
+                        h.EdgeProgress = 0;
+                    }
+                    else
+                    {
+                        h.IsEvacuating = false;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(h.TargetNodeId))
+                {
+                    MineNode n1 = _graph.Nodes[h.NodeId];
+                    MineNode n2 = _graph.Nodes[h.TargetNodeId];
+
+                    double edgeDistMeters = Math.Sqrt(Math.Pow(n1.X - n2.X, 2) + Math.Pow(n1.Y - n2.Y, 2));
+
+                    double currentSpeedMtPerMin = 50.0;
+                    if (h.HeartRate >= 120) currentSpeedMtPerMin = 35.0;
+
+                    double speedMtPerSec = (currentSpeedMtPerMin / 60.0) * 15.0;
+                    double moveAmt = speedMtPerSec * (_evacuationTimer.Interval / 1000.0);
+
+                    double currentDist = h.EdgeProgress * edgeDistMeters;
+                    currentDist += moveAmt;
+
+                    if (currentDist >= edgeDistMeters)
+                    {
+                        h.PreviousNodeId = h.NodeId;
+                        h.NodeId = h.TargetNodeId;
+                        h.TargetNodeId = "";
+                        h.EdgeProgress = 0;
+
+                        var newNode = _graph.Nodes[h.NodeId];
+                        if (newNode.Type == NodeType.MainExit || newNode.Type == NodeType.AlternativeExit || newNode.Type == NodeType.Shelter)
+                        {
+                            h.IsEvacuating = false;
+                            h.IsEvacuated = true;
+                            h.EvacuationPoint = newNode.Name.Contains("[") ? newNode.Name.Split('[')[0].Trim() : newNode.Name.Split('(')[0].Trim();
+                            Log($"✅ [BAŞARILI] {h.Name} güvenli bölgeye ({h.EvacuationPoint}) ulaştı!");
+
+                            if (_isRealHardwareMode && h.Id == "B-01") SendGuidanceToHardware("VIB:SUCCESS");
+
+                            UpdateEvacuatedList();
+                        }
+                        RecalculateRoute();
+                    }
+                    else
+                    {
+                        h.EdgeProgress = currentDist / edgeDistMeters;
+
+                        HelmetData selectedLeftPanelHelmet = _cmbLeftHelmets.SelectedItem as HelmetData;
+                        if (selectedLeftPanelHelmet != null && selectedLeftPanelHelmet.Id == h.Id && h.Route != null && h.Route.Success)
+                        {
+                            double covered = edgeDistMeters * h.EdgeProgress;
+                            double remainingMeters = Math.Max(0, h.Route.Distance - covered);
+
+                            double etaMins = remainingMeters / currentSpeedMtPerMin;
+                            _lblETA.Text = $"{remainingMeters:F1}m | ETA: {etaMins:F1} dk";
+                        }
+                    }
+                    needsRefresh = true;
+                }
+            }
+
+            if (needsRefresh) _mapControl.Invalidate();
         }
     }
 }
